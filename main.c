@@ -53,8 +53,8 @@ void read_input(InputBuffer* input_buffer) {
 
 struct Row_t {
   uint32_t id;
-  char username[COLUMN_USERNAME_SIZE];
-  char email[COLUMN_EMAIL_SIZE];
+  char username[COLUMN_USERNAME_SIZE + 1];
+  char email[COLUMN_EMAIL_SIZE + 1];
 };
 typedef struct Row_t Row;
 
@@ -72,7 +72,9 @@ const uint32_t TABLE_MAX_ROWS = TABLE_MAX_PAGES * ROWS_PER_PAGE;
 enum PrepareResult_t {
 		      PREPARE_SUCCESS,
 		      PREPARE_UNRECOGNIZED_STATEMENT,
-		      PREPARE_SYNTAX_ERROR
+		      PREPARE_SYNTAX_ERROR,
+		      PREPARE_STRING_TOO_LONG,
+		      PREPARE_NEGATIVE_ID
 };
 typedef enum PrepareResult_t PrepareResult;
 
@@ -88,15 +90,34 @@ struct Statement_t {
 };
 typedef struct Statement_t Statement;
 
+PrepareResult prepare_insert(InputBuffer* input_buffer, Statement* s) {
+  s->type = STATEMENT_INSERT;
+  char* keyword = strtok(input_buffer->buffer, " ");
+  char* id_str = strtok(NULL, " ");
+  char* username = strtok(NULL, " ");
+  char* email = strtok(NULL, " ");
+
+  if (id_str == NULL || username == NULL || email == NULL) {
+    return PREPARE_SYNTAX_ERROR;
+  }
+
+  int id = atoi(id_str);
+  if (id < 0) {
+    return PREPARE_NEGATIVE_ID;
+  }
+  if (strlen(username) > COLUMN_USERNAME_SIZE
+      || strlen(email) > COLUMN_EMAIL_SIZE) {
+    return PREPARE_STRING_TOO_LONG;
+  }
+  s->row.id = id;
+  strcpy(s->row.username, username);
+  strcpy(s->row.email, email);
+  return PREPARE_SUCCESS;
+}
+
 PrepareResult prepare_statement(InputBuffer* input_buffer, Statement* s) {
   if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
-    s->type = STATEMENT_INSERT;
-    int arg_assigned = sscanf(input_buffer->buffer, "insert %d %s %s", &(s->row.id),
-			      s->row.username, (s->row.email));
-    if (arg_assigned < 3) {
-      return PREPARE_SYNTAX_ERROR;
-    }
-    return PREPARE_SUCCESS;
+    return prepare_insert(input_buffer, s);
   }
 
   if (strncmp(input_buffer->buffer, "select", 6) == 0) {
@@ -225,7 +246,13 @@ int main(int argc, char* argv[]) {
       continue;
     case (PREPARE_SYNTAX_ERROR):
       printf("Syntax Error. Could not parse query.\n");
-      break;
+      continue;
+    case (PREPARE_STRING_TOO_LONG):
+      printf("String is too long.\n");
+      continue;
+    case (PREPARE_NEGATIVE_ID):
+      printf("ID must be positive.\n");
+      continue;
     }
 
     switch (execute_statement(&statement, table)) {
