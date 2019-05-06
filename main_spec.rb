@@ -83,4 +83,25 @@ describe 'database' do
                                      "db > ",
                                    ])
   end
+
+  it 'prints the structure of one node tree' do
+    scripts = [3, 1, 2].map do |i|
+      "insert #{i} user#{i} user#{i}@example.com"
+    end
+    scripts << ".btree"
+    scripts << ".exit"
+    result = run_scripts(scripts)
+
+    expect(result).to match_array([
+                                    "db > Executed.",
+                                    "db > Executed.",
+                                    "db > Executed.",
+                                    "db > Tree:",
+                                    "leaf (size 3)",
+                                    " - 0: 3",
+                                    " - 1: 1",
+                                    " - 2: 2",
+                                    "db > ",
+                                  ])
+  end
 end
