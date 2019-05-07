@@ -241,6 +241,12 @@ const uint32_t LEAF_NODE_CELL_SIZE = LEAF_NODE_KEY_SIZE + LEAF_NODE_VALUE_SIZE;
 const uint32_t LEAF_NODE_SPACE_FOR_CELLS = PAGE_SIZE - LEAF_NODE_HEADER_SIZE;
 const uint32_t LEAF_NODE_MAX_CELLS = LEAF_NODE_SPACE_FOR_CELLS / LEAF_NODE_CELL_SIZE;
 
+enum NodeType_t {
+		 NODE_LEAF,
+		 NODE_INTERNAL
+};
+typedef enum NodeType_t NodeType;
+
 // accessing leaf nodes
 uint32_t* leaf_node_num_cells(void* node) {
   return node + LEAF_NODE_NUM_CELLS_OFFSET;
@@ -258,7 +264,18 @@ void* leaf_node_value(void* node, uint32_t cell_num) {
   return leaf_node_cell(node, cell_num) + LEAF_NODE_VALUE_OFFSET;
 }
 
+NodeType get_node_type(void* node) {
+  uint8_t* type = (uint8_t *)(node + NODE_TYPE_OFFSET);
+  return (NodeType)(*type);
+}
+
+void set_node_type(void* node, NodeType type) {
+  uint8_t value = type;
+  *((uint8_t *)(node + NODE_TYPE_OFFSET)) = value;
+}
+
 void initialize_leaf_node(void* node) {
+  set_node_type(node, NODE_LEAF);
   *leaf_node_num_cells(node) = 0;
 }
 
@@ -339,15 +356,44 @@ Cursor* table_start(Table* t) {
   return cursor;
 }
 
-Cursor* table_end(Table* t) {
-  Cursor* cursor = malloc(sizeof(Cursor));
-  cursor->table = t;
-  cursor->end_of_table = true;
-  cursor->page_num = t->root_page_num;
+// binary search
+Cursor* leaf_node_find(Table* t, uint32_t page_num, uint32_t key) {
+  void* node = get_page(t->pager, page_num);
+  Cursor* c = malloc(sizeof(Cursor));
+  c->table = t;
+  c->page_num = page_num;
 
+  uint32_t min_index = 0;
+  uint32_t one_past_max_index = *leaf_node_num_cells(node);
+
+  while (one_past_max_index != min_index) {
+    uint32_t index = (min_index + one_past_max_index) / 2;
+    uint32_t key_at_index = *leaf_node_key(node, index);
+    if (key_at_index == key) {
+      c->cell_num = index;
+      return c;
+    }
+    if (key_at_index > key) {
+      one_past_max_index = index;
+    } else {
+      min_index = index + 1;
+    }
+  }
+
+  c->cell_num = min_index;
+  return c;
+}
+
+// returns position where key can be inserted, if already present,
+// returns its position
+Cursor* table_find(Table* t, uint32_t key) {
   void* root_node = get_page(t->pager, t->root_page_num);
-  cursor->cell_num = *leaf_node_num_cells(root_node);
-  return cursor;
+  if (get_node_type(root_node) == NODE_LEAF) {
+    return leaf_node_find(t, t->root_page_num, key);
+  } else {
+    printf("Need to implement searching an internal node.\n");
+    exit(EXIT_FAILURE);
+  }
 }
 
 void* cursor_value(Cursor* c) {
@@ -362,6 +408,22 @@ void cursor_advance(Cursor* c) {
     c->end_of_table = true;
   }
 }
+
+
+// CORE: VM
+
+enum MetaCommandResult_t {
+			  META_COMMAND_SUCCESS,
+			  META_COMMAND_UNRECOGNIZED
+};
+typedef enum MetaCommandResult_t MetaCommandResult;
+
+enum ExecuteResult_t {
+		      EXECUTE_SUCCESS,
+		      EXECUTE_TABLE_FULL,
+		      EXECUTE_DUPLICATE_KEY
+};
+typedef enum ExecuteResult_t ExecuteResult;
 
 void leaf_node_insert(Cursor* c, uint32_t key, Row* row) {
   void* node = get_page(c->table->pager, c->page_num);
@@ -385,32 +447,26 @@ void leaf_node_insert(Cursor* c, uint32_t key, Row* row) {
   serialize_row(row, leaf_node_value(node, c->cell_num));
 }
 
-
-// CORE: VM
-
-enum MetaCommandResult_t {
-			  META_COMMAND_SUCCESS,
-			  META_COMMAND_UNRECOGNIZED
-};
-typedef enum MetaCommandResult_t MetaCommandResult;
-
-enum ExecuteResult_t {
-		      EXECUTE_SUCCESS,
-		      EXECUTE_TABLE_FULL
-};
-typedef enum ExecuteResult_t ExecuteResult;
-
 void print_row(Row *row) {
   printf("(%d, %s, %s)\n", row->id, row->username, row->email);
 }
 
 ExecuteResult execute_insert(Statement* s, Table* t) {
   void* node = get_page(t->pager, t->root_page_num);
-  if ((*leaf_node_num_cells(node)) >= LEAF_NODE_MAX_CELLS) {
+  uint32_t num_cells = (*leaf_node_num_cells(node));
+  if (num_cells >= LEAF_NODE_MAX_CELLS) {
     return EXECUTE_TABLE_FULL;
   }
 
-  Cursor* cursor = table_end(t);
+  Row* row = &(s->row);
+  Cursor* cursor = table_find(t, row->id);
+
+  if (cursor->cell_num < num_cells) {
+    if ((*leaf_node_key(node, cursor->cell_num)) == row->id) {
+      return EXECUTE_DUPLICATE_KEY;
+    }
+  }
+
   leaf_node_insert(cursor, s->row.id, &(s->row));
   free(cursor);
 
@@ -503,6 +559,9 @@ int main(int argc, char* argv[]) {
       break;
     case (EXECUTE_TABLE_FULL):
       printf("Error: Table full.\n");
+      break;
+    case (EXECUTE_DUPLICATE_KEY):
+      printf("Error: Duplicate key.\n");
       break;
     }
   }
