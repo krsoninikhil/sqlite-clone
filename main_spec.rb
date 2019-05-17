@@ -162,4 +162,33 @@ describe 'database' do
                         "db > ",
                       ])
   end
+
+  it 'prints all rows of multi-level btree' do
+    script = (1..15).map do |i|
+      "insert #{i} user#{i} user#{i}@example.com"
+    end
+    script << "select"
+    script << ".exit"
+    result = run_scripts(script)
+
+    expect(result[15..result.length]).to match_array([
+                                    "db > (1, user1, user1@example.com)",
+                                    "(2, user2, user2@example.com)",
+                                    "(3, user3, user3@example.com)",
+                                    "(4, user4, user4@example.com)",
+                                    "(5, user5, user5@example.com)",
+                                    "(6, user6, user6@example.com)",
+                                    "(7, user7, user7@example.com)",
+                                    "(8, user8, user8@example.com)",
+                                    "(9, user9, user9@example.com)",
+                                    "(10, user10, user10@example.com)",
+                                    "(11, user11, user11@example.com)",
+                                    "(12, user12, user12@example.com)",
+                                    "(13, user13, user13@example.com)",
+                                    "(14, user14, user14@example.com)",
+                                    "(15, user15, user15@example.com)",
+                                    "Executed.",
+                                    "db > ",
+                                  ])
+  end
 end
